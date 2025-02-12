@@ -10,7 +10,7 @@ pipeline {
         NameBaseRelease = "FitnessRel"
         NameBaseUserRelease = "Администратор"
         cfsrc = "D:\\cf\\cf.cf"
-    }
+    } // Иест
     stages {
         stage('Обновление в релизном хранилище'){
             steps{
