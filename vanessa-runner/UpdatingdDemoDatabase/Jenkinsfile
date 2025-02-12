@@ -1,0 +1,102 @@
+pipeline {
+    agent {
+        label "${params.jenkinsAgent}"
+    }
+    environment {
+        VRUNNER_PATH = 'vrunner' // Путь к исполняемому файлу Vanessa Runner
+        JSON_PATH = 'vanessa-runner/UpdatingdDemoDatabase/udd.json'
+        allureResultsDir = "${env.WORKSPACE.replace('\\', '\\\\')}\\\\results"
+        allureReportUrl = "${env.JENKINS_URL}job/${env.JOB_NAME.replaceAll('/', '/job/')}/${env.BUILD_NUMBER}/allure"
+        NameBaseRelease = "FitnessRel"
+        NameBaseUserRelease = "Администратор"
+        cfsrc = "D:\\cf\\cf.cf"
+    }
+    stages {
+        stage('Обновление в релизном хранилище'){
+            steps{
+                script{
+                    bat """
+                    chcp 65001
+                    @call ${VRUNNER_PATH} session kill --with-nolock --db ${NameBaseRelease} --db-user ${NameBaseUserRelease}
+                    @call ${VRUNNER_PATH} loadrepo --storage-name http://192.168.2.16/hran1c/repository.1ccr/fitness_release --storage-user МихаилБ --storage-pwd 3AqH649z0B --ibconnection /Slocalhost/${NameBaseRelease} --db-user ${NameBaseUserRelease}
+                    @call ${VRUNNER_PATH} updatedb --ibconnection /Slocalhost/${NameBaseRelease} --db-user ${NameBaseUserRelease}
+                    """
+                }
+            }
+        }
+        stage('Выгрузка .cf и создание пустой базы') {
+            parallel {
+                stage('Выгрузка .cf файла конфигурации из ИБ') {
+                    steps {
+                        script {
+                            bat """
+                            chcp 65001
+                            @call ${VRUNNER_PATH} unload ${cfsrc} --ibconnection /Slocalhost/${NameBaseRelease} --db-user ${NameBaseUserRelease}
+                            """
+                        }
+                    }
+                }
+                stage('Создание пустой базы') {
+                    steps {
+                        script {
+                            bat """
+                            chcp 65001
+                            @call ${VRUNNER_PATH} create --db-server localhost --name udd --dbms PostgreSQL --db-admin postgres --db-admin-pwd postgres
+                            """
+                        }
+                    }
+                }
+            }
+        }
+        stage('Загрузка .cf файла в базу'){
+            steps{
+                script{
+                    bat """
+                    chcp 65001
+                    @call ${VRUNNER_PATH} load --src ${cfsrc} --ibconnection /Slocalhost/udd
+                    @call ${VRUNNER_PATH} updatedb --ibconnection /Slocalhost/udd
+                    """
+                }
+            }
+        }
+        stage('Первоначальное заполнение'){
+            steps{
+                script{
+                    bat """
+                    chcp 65001
+                    @call ${VRUNNER_PATH} vanessa --path vanessa-runner\\feature\\Main.feature --pathvanessa "C:\\VA_test\\vanessa-automation\\vanessa-automation.epf" --ibconnection /Slocalhost/pusto --vanessasettings vanessa-runner\\UpdatingdDemoDatabase\\VAParams.json
+                    """
+                }
+            }
+        }
+        stage('Удаление созданной базы'){
+            steps{
+                script{
+                    bat """
+                    chcp 65001
+                    @call ${VRUNNER_PATH} session kill --with-nolock --db udd --db-user admin
+                    @call ${VRUNNER_PATH} remove --name udd --drop-database --clear-database --db-user admin
+                    """
+                }
+            }
+        }
+    }
+    post {
+            always {
+                script {
+                     allure([
+                        includeProperties: false,
+                        jdk: '',
+                        results: [[path: "results"]]
+                    ])
+                    def reportMessage = """
+Тестирование первоначального заполнения
+Allure отчет доступен по ссылке:
+${allureReportUrl}
+                        """
+                        httpRequest(url: "https://api.telegram.org/bot${env.botToken}/sendMessage?chat_id=${env.chatId}&text=${URLEncoder.encode(reportMessage.trim(), 'UTF-8')}")
+            }
+        }
+    }
+}
+

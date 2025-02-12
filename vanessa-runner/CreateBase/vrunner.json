@@ -1,0 +1,71 @@
+
+{
+    "$schema": "https://raw.githubusercontent.com/vanessa-opensource/vanessa-runner/develop/vanessa-runner-schema.json",
+    "default": {
+        "--v8version": "8.3.24.1368",
+        "--bitness": "x64"
+    },
+    "syntax-check": {
+        "--groupbymetadata": true,
+        "--exception-file": "vanessa-runner/tools/syntax_check_exception.txt",
+        "--junitpath": "out/syntaxCheck/junit",
+        "--allure-results2": "D:/allure",
+        "--ibconnection": "/Slocalhost/FitnessRab",
+        "--db-user": "aleks",
+        "--db-pwd": "",
+        "--v8version": "8.3.24.1368",
+        "--mode": [
+            "-ExtendedModulesCheck",
+            "-ThinClient",
+            "-WebClient",
+            "-Server",
+            "-ExternalConnection",
+            "-ThickClientOrdinaryApplication",
+            "-EmptyHandlers",
+            "-UnreferenceProcedures",
+            "-ExtendedModulesCheck",
+            "-HandlersExistence"
+        ]
+    },
+    "create": {
+        "--db-server": "localhost",
+        "--name": "AvtotestQA",
+        "--dbms": "PostgreSQL",
+        "--db-admin":"postgres",
+        "--db-admin-pwd":"postgres"
+    },
+    "remove": {
+        "--name": "AvtotestQA",
+        "--drop-database": true,
+        "--clear-database": true,
+        "--db-user": "Администратор БД",
+        "--db-pwd": ""        
+    },
+    "session": {
+        "Действие": "kill",
+        "--db": "AvtotestQA",
+        "--db-user": "Администратор БД",
+        "--db-pwd": ""
+    },
+    "restore": {
+        "--dbms-type": "PostgreSQL",
+        "--dbms-server": "localhost",
+        "--dbms-base": "AvtotestQA",
+        "--dbms-user": "postgres",
+        "--dbms-pwd": "postgres",
+        "--ibconnection": "/Slocalhost/AvtotestQA"
+    },
+    "compileepf": {
+        "inputPath": "D:\\3\\Helix.epf",
+        "outputPath": "D:\\src\\CommonModules\\Helix\\Ext"
+    },
+    "update-dev": {
+        "--src": "D:\\src",
+        "--dt": "D:\\dt\\1Cv8(салон релизное).dt",
+        "--db-user": "Администратор (полные права)",
+        "--db-pwd": ""
+    },
+    "init-dev": {
+        
+    }
+}

@@ -1,0 +1,101 @@
+pipeline {
+
+    agent { label 'master' }
+
+    environment {
+        releaseServer = "localhost/VAStoma"
+        workServer = "localhost/Serv_Stoma_Rab"
+        releaseUser = "Админ"
+        workUser = "admin"
+        repositoryRelease = "http://192.168.2.16/hran1c/repository.1ccr/stomatology2_release"
+        repositoryWork = "http://192.168.2.16/hran1c/repository.1ccr/stomatology2"
+        dumpPathRelease = "D:\\Identificators\\Relis"
+        dumpPathWork = "D:\\Identificators\\Rab"
+        comparisonPath = "D:\\Identificators\\Obarabotka\\ПроверкаКонфигурации.epf"
+        verificationServer = "localhost/SverkaIdentif"
+        userREl = "VATest"
+        userRab = "VATest"
+        NameProduct = "Stomatology"
+    }
+
+    stages {
+      stage('Подключение и обновление из хранилища') {
+            parallel {
+                stage('Релизное') {
+                    steps {
+                        bat """
+                        chcp 65001
+                        "${env.platformPath}" DESIGNER /ConfigurationRepositoryUpdateCfg -revised -force /DepotUpdateCfg /UpdateDBCfg /S"${releaseServer}" /N"${releaseUser}" /ConfigurationRepositoryF"${repositoryRelease}" /ConfigurationRepositoryN"${userREl}" /ConfigurationRepositoryP""
+                        """
+                    }
+                }
+
+                stage('Рабочее') {
+                    steps {
+                        bat """
+                        chcp 65001
+                        "${env.platformPath}" DESIGNER /ConfigurationRepositoryUpdateCfg -revised -force /DepotUpdateCfg /UpdateDBCfg /S"${workServer}" /N"${workUser}" /ConfigurationRepositoryF"${repositoryWork}" /ConfigurationRepositoryN"${userRab}" /ConfigurationRepositoryP""
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Выгрузка XML') { 
+            parallel {
+                stage('Выгрузка из релизного') {
+                    steps {
+                        bat """
+                        chcp 65001
+                        "${env.platformPath}" DESIGNER /S"${releaseServer}" /N"${releaseUser}" /ConfigurationRepositoryF"${repositoryRelease}" /ConfigurationRepositoryN"${userREl}" /ConfigurationRepositoryP"" /DumpConfigToFiles "${dumpPathRelease}"
+                        """
+                    }
+                }
+
+                stage('Выгрузка из рабочего') {
+                    steps {
+                        bat """
+                        chcp 65001
+                        "${env.platformPath}" DESIGNER /S"${workServer}" /N"${workUser}" /ConfigurationRepositoryF"${repositoryWork}" /ConfigurationRepositoryN"${userRab}" /ConfigurationRepositoryP"" /DumpConfigToFiles "${dumpPathWork}"
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Сверка конфигурации') {
+            steps {
+                 bat """
+                chcp 65001
+                 "${env.platformPath}" /S"${verificationServer}" /Execute "${comparisonPath}"
+                  """
+            }
+        }
+
+        stage('Отправка файла в чат') {
+            steps {
+                script {
+                    def configuration_comparison_manager = 'IDENTIFICATOR/configuration_comparison_manager.py'
+                    def telegram_file_sender = 'IDENTIFICATOR/telegram_file_sender.py'
+                    bat "python ${configuration_comparison_manager}"
+                    bat "python ${telegram_file_sender} ${NameProduct}"
+                }
+            }
+        }
+
+        stage("Очистка каталога") {
+            steps {
+                bat """
+                chcp 65001
+                @echo off
+                echo Удаление всех файлов и папок в каталоге
+                powershell -command "Get-ChildItem '${dumpPathWork}' -Recurse | Remove-Item -Recurse -Force"
+                echo Удаление всех файлов и папок в каталоге
+                powershell -command "Get-ChildItem '${dumpPathRelease}' -Recurse | Remove-Item -Recurse -Force"
+                echo Удаление завершено.
+                pause
+                """
+            }
+        }
+    }
+}

@@ -1,0 +1,27 @@
+pipeline {
+    agent {
+        label "${params.jenkinsAgent}"
+    }
+    stages {
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    def imageName = "1c-java-vanessa"
+                    def tag = "latest"
+
+                    sh "docker build -t ${imageName}:${tag} ."
+                }
+            }
+        }
+
+        stage('Run Docker Container') {
+            steps {
+                script {
+                    def containerName = "1c_env"
+
+                    sh "docker run --name ${containerName} -d 1c-java-vanessa:latest"
+                }
+            }
+        }
+    }
+}

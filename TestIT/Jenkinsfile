@@ -1,0 +1,120 @@
+pipeline {
+    agent {
+        label "${params.jenkinsAgent}"
+    }
+
+    environment {
+        TESTIT_URL = 'https://team-x62t.testit.software/'
+        TESTIT_PROJECT_ID = '3802f329-190c-4617-8bb0-2c3696abeb8f'  // Замените на реальный UUID проекта
+        TESTIT_CONFIGURATION_ID = 'a5b78e13-1f11-45db-b8a2-097e71930f63'  // Замените на реальный UUID конфигурации
+        TESTIT_TOKEN = credentials('S09XeFE5akJyeVltYUx2T3pp')
+        allureResultsDir = "${env.WORKSPACE.replace('\\', '\\\\')}\\\\results"
+        workSpaceDir = "${env.WORKSPACE.replace('\\', '\\\\')}"
+        sourceFile = "VA/Sample_${params.dbName}.json"
+        vaParamsjson = 'VA/VAParams.json'    
+        allureReportUrl = "${env.JENKINS_URL}job/${JOB_NAME}/${BUILD_NUMBER}/allure"
+        allureReportUrlAll = "http://37.26.136.234:8085/job/${JOB_NAME}/${BUILD_NUMBER}/allure"
+    }
+
+    stages {
+        stage('Обновление базы') {
+            steps {
+                script {
+                    if (params.dbName.contains('VAFitness')) {
+                        def vaBase = "DESKTOP-BIF25NH/VAFitness"
+                        def vaUser = "Админ"
+                        def repUser = "VATest"
+                        def updateBase = 'VA/updateBase.py'
+                        powershell "python ${updateBase} '${platformPath}' ${vaBase} ${vaUser} ${repositoryReleaseFitness} ${repUser}"
+                    } 
+
+                    if (params.dbName.contains('VASPA')) {
+                        def vaBase = "localhost/VASPA"
+                        def vaUser = "Админ"
+                        def repUser = "VATest"
+                        def updateBase = 'VA/updateBase.py'
+                        powershell "python ${updateBase} '${platformPath}' ${vaBase} ${vaUser} ${repositoryReleaseSalon} ${repUser}"
+                    }
+
+                    if (params.dbName.contains('VAStoma')) {
+                        def vaBase = "localhost/VAStoma"
+                        def vaUser = "Админ"
+                        def repUser = "VATest"
+                        def updateBase = 'VA/updateBase.py'
+                        powershell "python ${updateBase} '${platformPath}' ${vaBase} ${vaUser} ${repositoryReleaseStom} ${repUser}"
+                    }
+                }
+            }
+        }
+
+        stage('Подготовка JSON') {
+            steps {
+                script {
+                    def messagetestStart = "Автотестирование ${JOB_NAME} сборка #${BUILD_NUMBER} запущено."
+                    httpRequest(url: "https://api.telegram.org/bot${env.botToken}/sendMessage?chat_id=${env.chatId}&text=${URLEncoder.encode(messagetestStart, 'UTF-8')}")
+
+                    def script = 'VA/replace_words.py'
+                    powershell "python ${script} ${params.TestPathPlaceholder} ${allureResultsDir} ${workSpaceDir} ${sourceFile} ${vaParamsjson}"
+                }
+            }
+        }
+
+        stage('Автотест') {
+            steps {
+                script {
+                    powershell """
+                    chcp 65001
+                    & "${env.platformPath}" /N"Админ" /TestManager /Execute "C:\\VA_test\\vanessa-automation\\vanessa-automation.epf" /IBConnectionString "Srvr=""DESKTOP-BIF25NH"";Ref=""${params.dbName}"";" /C"StartFeaturePlayer;QuietInstallVanessaExt;VAParams=${vaParamsjson}"
+                    """
+                }
+            }
+        }
+
+        stage('Генерация Allure отчета') {
+            steps {
+                script {
+                    allure([
+                        includeProperties: false,
+                        jdk: '',
+                        results: [[path: "results"]]
+                    ])
+                }
+            }
+        }
+
+        stage('Отправка результатов в Test IT') {
+            steps {
+                script {
+                    // Отправка отчётов в Test IT
+                    bat """
+                        testit results import ^
+                        --url ${env.TESTIT_URL} ^
+                        --project-id ${env.TESTIT_PROJECT_ID} ^
+                        --configuration-id ${env.TESTIT_CONFIGURATION_ID} ^
+                        --private-token ${env.TESTIT_TOKEN} ^
+                        --testrun-name "Jenkins Test Run #${BUILD_NUMBER}" ^
+                        --results ${allureResultsDir}\\test-results.xml
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            script {
+                def reportMessage = """
+Автотестирование завершено.
+
+Проект: ${JOB_NAME}
+Сборка: #${BUILD_NUMBER}
+
+Allure отчет доступен по ссылке:
+${allureReportUrl}
+${allureReportUrlAll}
+                """
+                httpRequest(url: "https://api.telegram.org/bot${env.botToken}/sendMessage?chat_id=${env.chatId}&text=${URLEncoder.encode(reportMessage.trim(), 'UTF-8')}")
+            }
+        }
+    }
+}

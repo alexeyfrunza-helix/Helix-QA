@@ -1,0 +1,143 @@
+pipeline {
+
+    agent {
+        label "${params.jenkinsAgent}"
+    }
+
+    environment {
+        allureResultsDir = "${env.WORKSPACE.replace('\\', '\\\\')}\\\\results"
+        workSpaceDir = "${env.WORKSPACE.replace('\\', '\\\\')}"
+        sourceFile = "SERVER-71/Sample_${params.dbName}.json"
+        vaParamsjson = 'SERVER-71/VAParams.json'    
+        allureReportUrl = "${env.JENKINS_URL}job/${env.JOB_NAME.replaceAll('/', '/job/')}/${env.BUILD_NUMBER}/allure"
+    }
+    stages {
+        stage("Очистка каталога") {
+            steps {
+                powershell '''
+                $resultsPath = "$env:WORKSPACE\\results"
+                Write-Host "Удаление всех файлов и папок в каталоге: $resultsPath"
+
+                if (-Not (Test-Path $resultsPath)) {
+                    Write-Host "Каталог $resultsPath отсутствует или уже пуст."
+                } else {
+                    # Удаление всех файлов
+                    $files = Get-ChildItem -Path "$resultsPath\\*" -File -Recurse -Force
+                    foreach ($file in $files) {
+                        Write-Host "Удаление файла: $($file.FullName)"
+                        try {
+                            Remove-Item -Path $file.FullName -Force -ErrorAction Stop
+                        } catch {
+                            Write-Host "Ошибка удаления файла: $($file.FullName). $_"
+                        }
+                    }
+
+                    # Удаление всех папок
+                    $folders = Get-ChildItem -Path "$resultsPath\\*" -Directory -Recurse -Force
+                    foreach ($folder in $folders) {
+                        Write-Host "Удаление папки: $($folder.FullName)"
+                        try {
+                            Remove-Item -Path $folder.FullName -Recurse -Force -ErrorAction Stop
+                        } catch {
+                            Write-Host "Ошибка удаления папки: $($folder.FullName). $_"
+                        }
+                    }
+
+                    Write-Host "Удаление завершено."
+                }
+                '''
+            }
+        }
+
+        stage('Обновление информационной базы из релизного хранилища') {
+            steps {
+                script {
+                    if (params.dbName.contains('VAFitness')) {
+                        def vaBase = "localhost/VAFitness"
+                        def vaUser = "Админ"
+                        def repUser = "VATest"
+                        def updateBase = 'SERVER-71/updateBase.py'
+                        powershell "python ${updateBase} '${platformPath}' ${vaBase} ${vaUser} ${repositoryReleaseFitness} ${repUser}"
+                    }
+                    if (params.dbName.contains('VASPA')) {
+                        def vaBase = "localhost/VASPA"
+                        def vaUser = "Админ"
+                        def repUser = "VATest"
+                        def updateBase = 'SERVER-71/updateBase.py'
+                        powershell "python ${updateBase} '${platformPath}' ${vaBase} ${vaUser} ${repositoryReleaseSalon} ${repUser}"
+                    }
+                    if (params.dbName.contains('VAStoma')) {
+                        def vaBase = "localhost/VAStoma"
+                        def vaUser = "Админ"
+                        def repUser = "VATest"
+                        def updateBase = 'SERVER-71/updateBase.py'
+                        powershell "python ${updateBase} '${platformPath}' ${vaBase} ${vaUser} ${repositoryReleaseStom} ${repUser}"
+                }
+            }
+        }
+    }
+
+        stage('Отправка сообщения в телеграмм и подготавка JSON') {
+            steps {
+                script {
+                    //Отправвка сообщения в телеграмм
+                     def messagetestStart = "Автотестирование ${JOB_NAME} сборка #${BUILD_NUMBER} запущено."
+                     httpRequest(url: "https://api.telegram.org/bot${env.botToken}/sendMessage?chat_id=${env.chatId}&text=${URLEncoder.encode(messagetestStart, 'UTF-8')}")
+                    // Формируем VAParams.json
+                    def script = 'SERVER-71/replace_words.py'
+                    powershell "python ${script} ${params.TestPathPlaceholder} ${allureResultsDir} ${workSpaceDir} ${sourceFile} ${vaParamsjson}"
+                }
+            }
+        }
+
+        stage('Выполнение тестирования') {
+            steps {
+                script {
+                    powershell """
+                    chcp 65001
+                    & "${env.platformPath}" /N"Админ" /TestManager /Execute "C:\\VA_Test\\vanessa-automation\\vanessa-automation.epf" /IBConnectionString "Srvr=""localhost"";Ref=""${params.dbName}"";" /C"StartFeaturePlayer;QuietInstallVanessaExt;VAParams=${vaParamsjson}"
+                    """
+                }
+            }
+        }
+        // stage('Отправка в TestIT') {
+        //     steps {
+        //         script {
+        //             def testIT = 'SERVER-71/TestITupload.py'
+        //             powershell "python ${testIT} ${allureResultsDir} ${JOB_NAME}"
+        //         }
+        //     }
+        // }
+
+        stage('Генерация Allure отчета') {
+            steps {
+                script {
+                    allure([
+                        includeProperties: false,
+                        jdk: '',
+                        results: [[path: "results"]]
+                    ])
+                    
+                }
+            }
+        }
+    }
+        post {
+            always {
+               //junit allowEmptyResults: true, testResults: "${WORKSPACE}\\FITNESS_debug\\results\\junit.xml"
+                script {
+                    def reportMessage = """
+Автотестирование завершено.
+
+Allure отчет доступен по ссылке:
+${allureReportUrl}
+
+Проект: ${JOB_NAME}
+Сборка: #${BUILD_NUMBER}
+                        """
+                        
+                       httpRequest(url: "https://api.telegram.org/bot${env.botToken}/sendMessage?chat_id=${env.chatId}&text=${URLEncoder.encode(reportMessage.trim(), 'UTF-8')}")
+                    }
+                }
+            }
+}

@@ -1,0 +1,187 @@
+pipeline {
+    agent any
+		environment {
+			// Параметры, которые могут изменяться
+			TOKEN = '7117726988:AAFJFXz3rF7XyNXK23vtcy6MQG1E9x3DmRc'
+			CHAT_ID = "${params.chat_id}"
+			WS = 'C:\\Program Files\\1cv8\\8.3.24.1368\\bin\\1cv8c.exe'
+            BASE_URL = 'http://95.163.137.45/demo_stoma_denis'
+			USER_NAME = 'Виноградова Мария Александровна'
+          
+            // Релизное хранилище
+            INFOBASE_PATH = "D:\\DemoBase\\Stoma"
+			INFOBASE_USER = "admin"
+            REPO_URL = 'http://192.168.2.16/hran1c/repository.1ccr/stomatology2_release'
+            REPO_USER = 'Tg_Bot'
+			
+            TEMPLATE_NAME = 'ZIPФайлЗубнойФормулы'
+            EPF_FILE = 'D:\\Zub\\ВыгрузкаЗагрузкаДанныхЗубнойФормулы.epf'
+            SOURCE_FILE = 'D:\\Zub\\Выгрузка.zip'
+			CONFIG_REPORT_FILE = 'D:\\Zub\\ОтчетПоКонфигурации.xml'
+		}
+	stages {		
+		stage('Выгрузка.zip') {
+            steps {
+                script {
+                    def command = """
+                        chcp 65001
+                        "${WS}" /WS"${BASE_URL}" /DisableStartupDialogs /N"${USER_NAME}" /Execute "${EPF_FILE}"
+                    """
+                    bat command
+                }
+            }
+        }
+        stage('Захват') {
+            steps {
+                script {
+                    def command = """
+                        chcp 65001
+                        "${env.platformPath}" DESIGNER /ConfigurationRepositoryUpdateCfg /DepotUpdateCfg /UpdateDBCfg /F"${INFOBASE_PATH}" /N"${INFOBASE_USER}" /ConfigurationRepositoryF"${REPO_URL}" /ConfigurationRepositoryN"${REPO_USER}" /DisableStartupDialogs /ConfigurationRepositoryLock -Objects "${CONFIG_REPORT_FILE}"
+                    """
+                    bat command
+                }
+            }
+        }
+        stage('Загрузка') {
+            steps {
+                script {
+                    def command = """
+                        @echo off
+                        chcp 65001
+                        set SourceFile=${SOURCE_FILE}
+                        set InfoBasePath=${INFOBASE_PATH}
+                        set TemplateName=${TEMPLATE_NAME}
+
+                        if not exist %SourceFile% (
+                            echo Исходный файл "%SourceFile%" не найден!
+                            goto Error
+                        )
+
+                        if not exist %InfoBasePath% (
+                            echo Путь к информационной базе "%InfoBasePath%" не найден!
+                            goto Error
+                        )
+
+                        echo Путь к информационной базе: %InfoBasePath%
+                        echo Исходный файл: %SourceFile%
+                        echo Целевой шаблон: %TemplateName%
+
+                        for /f "delims=" %%i in ('dir /b /s /a:d /O:-D "%ProgramFiles%\\1cv8\\8.3.*"') do (
+                            set Designer="%%i\\bin\\1cv8.exe"
+                            if exist "%%i\\bin\\1cv8.exe" goto Found
+                        )
+
+                        echo "1C:Enterprise не найден, невозможно обновить шаблон..."
+                        goto Error
+
+                        :Found
+                        echo Найдена 1C:Enterprise: %Designer%
+                        echo.
+
+                        set TempDir=%TEMP%\\template.upd
+                        if exist "%TempDir%" (rmdir /s /q "%TempDir%" >nul)
+                        mkdir "%TempDir%"
+
+                        if "%CheckTemplate%" == "" goto CopySource
+
+                        echo Проверка шаблона...
+                        %Designer% CONFIG /F%InfoBasePath% /DumpConfigFiles"%TempDir%" -Template
+                        if errorlevel 1 goto Error
+
+                        if not exist "%TempDir%\\ОбщийМакет.%TemplateName%.Макет.bin" (
+                            echo Ошибка: Общий шаблон "%TemplateName%" не найден в информационной базе "%InfoBasePath%"
+                            goto Error
+                        )
+                        if exist "%TempDir%"\\* (rmdir /s /q "%TempDir%" >nul)
+                        mkdir "%TempDir%"
+
+                        :CopySource
+                        copy "%SourceFile%" "%TempDir%\\ОбщийМакет.%TemplateName%.Макет.bin" >nul
+
+                        echo Загрузка шаблона...
+                        %Designer% CONFIG /F"%InfoBasePath%" /ConfigurationRepositoryUpdateCfg /DepotUpdateCfg /N"${INFOBASE_USER}" /ConfigurationRepositoryF"${REPO_URL}" /ConfigurationRepositoryN"${REPO_USER}" /LoadConfigFiles"%TempDir%" -Template /UpdateDBCfg
+                        if errorlevel 1 goto Error
+
+                        :Success
+                        echo Операция выполнена успешно
+                        goto End
+
+                        :Error
+                        echo Ошибка (%Errorlevel%), операция прервана
+                        set errorlevel=1
+
+                        :End
+                        chcp 866 >nul
+                        if exist "%TempDir%" (rmdir %TempDir% /S /Q >nul)
+                        """
+                    bat command
+                }
+            }
+        }
+        stage('Помещение') {
+            steps {
+                script {
+                    def command = """
+                        chcp 65001
+                        "${env.platformPath}" DESIGNER /ConfigurationRepositoryUpdateCfg /DepotUpdateCfg /UpdateDBCfg /F"${INFOBASE_PATH}" /N"${INFOBASE_USER}" /ConfigurationRepositoryF"${REPO_URL}" /ConfigurationRepositoryN"${REPO_USER}" /DisableStartupDialogs /ConfigurationRepositoryCommit -Objects "${CONFIG_REPORT_FILE}"
+                    """
+                    bat command
+                }
+            }
+        }
+        stage('Удаление') {
+            steps {
+                script {
+                    def command = """
+                        @echo off
+                        chcp 65001
+                        set ZipFile=${SOURCE_FILE}
+
+                        if exist "%ZipFile%" (
+                            echo Удаление файла "%ZipFile%"
+                            del "%ZipFile%"
+                            if errorlevel 1 (
+                                echo Ошибка при удалении файла "%ZipFile%"
+                                exit /b 1
+                            )
+                        ) else (
+                            echo Файл "%ZipFile%" не найден.
+                        )
+                    """
+                    bat command
+                }
+            }
+        }
+    }
+    post {
+        success {
+            script {
+                sendTelegramMessage("${env.CHAT_ID}", "Job '${env.JOB_NAME}' - SUCCESS")
+                bat "python ZUB/send_telegram_message.py"
+            }
+        }
+        failure {
+            script {
+                sendTelegramMessage("${env.CHAT_ID}", "Job '${env.JOB_NAME}' - ERROR")
+            }
+        }
+    }
+}
+
+def sendTelegramMessage(String chatId, String message) {
+    def url = "https://api.telegram.org/bot${env.TOKEN}/sendMessage"
+    def payload = [
+        chat_id: chatId,
+        text: message
+    ]
+    
+    def response = httpRequest(
+        url: url,
+        httpMode: 'POST',
+        contentType: 'APPLICATION_JSON',
+        requestBody: groovy.json.JsonOutput.toJson(payload),
+        validResponseCodes: '200'
+    )
+    
+    echo "Response: ${response}"
+}

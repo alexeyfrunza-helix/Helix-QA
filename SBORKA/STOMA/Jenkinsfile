@@ -1,0 +1,541 @@
+pipeline {
+    parameters {
+        string(defaultValue: "OneS", description: 'Нода дженкинса, на которой запускать пайплайн', name: 'jenkinsAgent')
+        string(defaultValue: "C:\\automation\\sample\\Stomatology", description: 'Путь к шаблонам', name: 'sourceDirectory')
+        string(defaultValue: "D:\\STOMA_release_build\\Stomatology", description: 'Путь к документации', name: 'target_path')
+        string(defaultValue: "2.1.18.1", description: 'Старая версия', name: 'oldversion_1')
+        string(defaultValue: "2.1.19.1", description: 'Новая версия', name: 'newversion_1')
+        string(defaultValue: "8.3.24.1368", description: 'Версия платформы 1с', name: 'platformversion_1')
+        string(defaultValue: "3.0.37.11710", description: 'Версия СЛК', name: 'slkversion')
+    }
+
+    environment {
+        oldCF = "D:\\STOMA_release_build\\Old_versions_cf"  // Старые cf 
+        fbrb = "D:\\STOMA_release_build\\files_before_release_build" // Все необходимые файлы для сборки релиза
+        sbor = "D:\\STOMA_release_build\\Sbor" // Файлы для сборки поставок
+
+        collectedReleaseP = "D:\\STOMA_release_build\\Collected_release\\Polnaya"  // Полная поствка
+        collectedReleaseOb = "D:\\STOMA_release_build\\Collected_release\\obnovlenine" // Поставка обновления
+
+        allureReportUrl = "${env.JENKINS_URL}job/${env.JOB_NAME.replaceAll('/', '/job/')}/${env.BUILD_NUMBER}/allure"
+        allureResultsDir = "${env.WORKSPACE.replace('\\', '\\\\')}\\\\results"
+
+        varepositoryUser = "VATest"
+        // Релизное хранилище
+        releaseServer = "localhost/VAStoma"
+        releaseUser = "Админ"
+        // База на которой проходит сборка
+        baseBuild = "localhost/StomaSborka"
+        buildUser = "Николаев Лев (Полные права)"
+        // База VA для запуска обработки
+        testManagerBase = "localhost/VAStoma"
+        testManagerUser = "Админ"
+        // TelegramBot
+        botToken = '7117726988:AAFJFXz3rF7XyNXK23vtcy6MQG1E9x3DmRc'
+        chatId = '-1002167629740'
+    }
+
+    agent { label "${params.jenkinsAgent}" }
+
+    stages {
+        stage("Подготовка и запуск") {
+            steps {
+                script {
+                    def sourceDirectory = params.sourceDirectory
+                    def target_path = params.target_path
+                    def oldversion_1 = params.oldversion_1
+                    def newversion_1 = params.newversion_1
+                    def platformversion_1 = params.platformversion_1
+                    def slkversion = params.slkversion
+                    def messageStart = 'Запущен процесс сборки «1С: Стоматологическая клиника 2.0»'
+                    def response = httpRequest(url: "https://api.telegram.org/bot${botToken}/sendMessage?chat_id=${chatId}&text=${URLEncoder.encode(messageStart, 'UTF-8')}")
+                }
+            }
+        }
+        stage('Обновление документации') {
+            steps {
+                script {
+                    def scriptPath = 'SBORKA/records/delete_folders_and_files.py'
+                    def scriptPath1 = 'SBORKA/records/update_files_and_contents.py'
+                    def scriptPath2 = 'SBORKA/records/process_files.py'
+                    bat "python ${scriptPath} ${params.target_path}"
+                    bat "python ${scriptPath1} ${params.sourceDirectory} ${params.target_path} ${params.oldversion_1} ${params.newversion_1} ${params.platformversion_1} ${params.slkversion} ${sbor}"
+                    bat "python ${scriptPath2} ${params.oldversion_1} ${params.newversion_1}"
+                }
+            }
+        }
+        stage('Генерация Allure отчета') {
+            steps {
+                script {
+                    allure([
+                        includeProperties: false,
+                        jdk: '',
+                        results: [[path: "results"]]
+                    ])
+                    
+                }
+            }
+        }
+        stage("Выгрузка из релизного хранилища") {
+            steps {
+                // Обновление в релизном хранилище
+                bat """
+                chcp 65001
+                "${env.platformPath}" DESIGNER /ConfigurationRepositoryUpdateCfg -revised -force /DepotUpdateCfg /UpdateDBCfg /S"${releaseServer}" /N"${releaseUser}" /ConfigurationRepositoryF"${env.repositoryReleaseStom}" /ConfigurationRepositoryN"${varepositoryUser}" /ConfigurationRepositoryP""
+                """
+                // Выгрузка .cf из релизного хранилища
+                // bat """
+                // chcp 65001
+                // "${env.platformPath}" DESIGNER /S"${releaseServer}" /N"${releaseUser}" /DisableStartupDialogs /DumpCfg ${fbrb}\\1Cv8.cf
+                // """
+                // Выгрузка мессенджера из релизного хранилища
+                bat """
+                chcp 65001
+                "${env.platformPath}" DESIGNER /S"${releaseServer}" /N"${releaseUser}" /DisableStartupDialogs /DumpCfg ${fbrb}\\messenger.cfe -Extension Мессенджер_Стоматология
+                """
+                // Выгрузка журнала записи из релизного хранилища
+                bat """
+                chcp 65001
+                "${env.platformPath}" DESIGNER /S"${releaseServer}" /N"${releaseUser}" /DisableStartupDialogs /DumpCfg ${fbrb}\\jurnal.cfe -Extension ЖурналЗаписи_Стоматология
+                """
+            }
+        }
+
+        stage(' Загрузка .cf в базу для сборки релиза') {
+            steps {
+                bat """
+                chcp 65001
+                "${env.platformPath}" CONFIG /S"${baseBuild}" /N"${buildUser}" /LoadCfg ${fbrb}\\1Cv8.cf /UpdateDBCfg
+                """
+            }
+        }
+
+        stage("Обновление базы") {
+            steps {
+                bat """
+                @echo off
+                chcp 65001 >nul
+                "${env.platformPath}" /N"${testManagerUser}" /TestManager /Execute "C:\\VA_test\\epf\\vanessa-automation.epf" /IBConnectionString "Srvr=""localhost"";Ref=""VAStoma"";" /C"StartFeaturePlayer;QuietInstallVanessaExt;VAParams=C:\\GitHu\\Helix-QA\\SBORKA\\STOMA\\VAParams.json"
+                """
+            }
+        }
+
+        stage('Пауза') {
+            steps {
+               script{
+                    def messageText = """Сборка приостановлена. Необходимо создать внешнюю обработку, удалить Helix и fresh, выгрузить идентификатор
+                    ${allureReportUrl}
+                    """
+                    // Отправка сообщения в Telegram
+                    
+                    def response = httpRequest(url: "https://api.telegram.org/bot${botToken}/sendMessage?chat_id=${chatId}&text=${URLEncoder.encode(messageText, 'UTF-8')}")
+                    // Вручную запрашиваем продолжение пайплайна
+                    input 'Продолжить выполнение пайплайна?'
+                }
+            }
+        }
+
+        stage('Шифрование расширения') {
+            steps {
+              bat """
+               start D:\\STOMA_release_build\\Netlenka1c\\Netlenka1C.exe --mode=prof --source D:\\STOMA_release_build\\files_before_release_build\\jurnal.cfe --createpdb
+               exit
+                """
+            }
+        }
+
+        stage("Загрузка расширений и СЛК") {
+            steps {
+                script {
+                // Загружает мессенджер в макет 'РасширениеМессенджера'
+                bat """
+                echo off
+                    chcp 65001 >nul
+                    set SourceFile=${fbrb}\\messenger.cfe
+                    set TemplateName=РасширениеМессенджера
+                    if not exist %SourceFile% (
+                        echo Исходный файл "%SourceFile%" не найден!
+                        goto Error
+                    )
+                    echo Путь к информационной базе: %${baseBuild}%
+                    echo Исходный файл: %SourceFile%
+                    echo Целевой шаблон: %TemplateName%
+                    for /f "delims=" %%i in ('dir /b /s /a:d /O:-D "%ProgramFiles%\\1cv8\\8.3.*"') do (
+                        set Designer="%%i\\bin\\1cv8.exe"
+                        if exist "%%i\\bin\\1cv8.exe" goto Found
+                    )
+                    echo "1C:Enterprise не найден, невозможно обновить шаблон..."
+                    goto Error
+                    :Found
+                    echo Найдена 1C:Enterprise: %Designer%
+                    echo.
+                    set TempDir=%TEMP%\\template.upd
+                    if exist "%TempDir%" (rmdir /s /q "%TempDir%" >nul)
+                    mkdir "%TempDir%"
+                    if "%CheckTemplate%" == "" goto CopySource
+                    echo Проверка шаблона...
+                    "${env.platformPath}" DESIGNER /S"${baseBuild}" /DumpConfigFiles"%TempDir%" -Template
+                    if errorlevel 1 goto Error
+
+                    if not exist "%TempDir%\\ОбщийМакет.%TemplateName%.Макет.bin" (
+                        echo Ошибка: Общий шаблон "%TemplateName%" не найден в информационной базе "%${baseBuild}%"
+                        goto Error
+                    )
+                    if exist "%TempDir%"\\* (rmdir /s /q "%TempDir%" >nul)
+                    mkdir "%TempDir%"
+                    :CopySource
+                    copy "%SourceFile%" "%TempDir%\\ОбщийМакет.%TemplateName%.Макет.bin" >nul
+                    echo Загрузка шаблона...
+                    "${env.platformPath}" DESIGNER /S"${baseBuild}" /N"${buildUser}" /LoadConfigFiles"%TempDir%" -Template /UpdateDBCfg
+                    if errorlevel 1 goto Error
+                    :Success
+                    echo Операция выполнена успешно
+                    goto End
+                    :Error
+                    echo Ошибка (%Errorlevel%), операция прервана
+                    set errorlevel=1
+                    :End
+                    chcp 866 >nul
+                    if exist "%TempDir%" (rmdir %TempDir% /S /Q >nul)
+                    echo.
+                """
+
+                // Загружает журнал записи в макет 'РасширениеЖурналаЗаписи'
+                bat """
+                echo off
+
+                    rem Устанавливаем кодировку для корректного отображения русских символов
+                    chcp 65001 >nul
+
+                    rem Задаем переменные: имя исходного файла, путь к информационной базе и имя шаблона
+                    set SourceFile=${fbrb}\\Protected\\jurnal.cfe
+                    set TemplateName=РасширениеЖурналаЗаписи
+
+                    rem Проверяем существование исходного файла
+                    if not exist %SourceFile% (
+                        echo Исходный файл "%SourceFile%" не найден!
+                        goto Error
+                    )
+
+                    echo Путь к информационной базе: %${baseBuild}%
+                    echo Исходный файл: %SourceFile%
+                    echo Целевой шаблон: %TemplateName%
+
+                    rem Ищем установленную версию 1C:Enterprise
+                    for /f "delims=" %%i in ('dir /b /s /a:d /O:-D "%ProgramFiles%\\1cv8\\8.3.*"') do (
+                        set Designer="%%i\\bin\\1cv8.exe"
+                        if exist "%%i\\bin\\1cv8.exe" goto Found
+                    )
+
+                    rem Если 1C:Enterprise не найден, выводим сообщение об ошибке
+                    echo "1C:Enterprise не найден, невозможно обновить шаблон..."
+                    goto Error
+
+                    :Found
+                    echo Найдена 1C:Enterprise: %Designer%
+                    echo.
+
+                    rem Создаем временную директорию для хранения промежуточных файлов
+                    set TempDir=%TEMP%\\template.upd
+                    if exist "%TempDir%" (rmdir /s /q "%TempDir%" >nul)
+                    mkdir "%TempDir%"
+
+                    rem Если переменная CheckTemplate пустая, переходим к копированию исходного файла
+                    if "%CheckTemplate%" == "" goto CopySource
+
+                    rem Проверяем наличие шаблона в информационной базе
+                    echo Проверка шаблона...
+                    "${env.platformPath}" DESIGNER /S"${baseBuild}" /DumpConfigFiles"%TempDir%" -Template
+                    if errorlevel 1 goto Error
+
+                    rem Если общий шаблон не найден, выводим сообщение об ошибке
+                    if not exist "%TempDir%\\ОбщийМакет.%TemplateName%.Макет.bin" (
+                        echo Ошибка: Общий шаблон "%TemplateName%" не найден в информационной базе "%${baseBuild}%"
+                        goto Error
+                    )
+                    if exist "%TempDir%"\\* (rmdir /s /q "%TempDir%" >nul)
+                    mkdir "%TempDir%"
+
+                    :CopySource
+                    rem Копируем исходный файл в временную директорию
+                    copy "%SourceFile%" "%TempDir%\\ОбщийМакет.%TemplateName%.Макет.bin" >nul
+
+                    rem Загружаем шаблон в информационную базу и обновляем конфигурацию
+                    echo Загрузка шаблона...
+                    "${env.platformPath}" DESIGNER /S"${baseBuild}" /N"${buildUser}" /LoadConfigFiles"%TempDir%" -Template /UpdateDBCfg
+                    if errorlevel 1 goto Error
+
+                    :Success
+                    echo Операция выполнена успешно
+                    goto End
+
+                    :Error
+                    echo Ошибка (%Errorlevel%), операция прервана
+                    set errorlevel=1
+
+                    :End
+                    rem Восстанавливаем кодировку и удаляем временную директорию
+                    chcp 866 >nul
+                    if exist "%TempDir%" (rmdir %TempDir% /S /Q >nul)
+
+                    echo.
+                """
+
+                // Загрузка компаненты СЛК в макет 'КомпонентаСЛК'
+                bat """
+                   @echo off
+
+                    rem Устанавливаем кодировку для корректного отображения русских символов
+                    chcp 65001 >nul
+
+                    rem Задаем переменные: имя исходного файла, путь к информационной базе и имя шаблона
+                    set SourceFile=${fbrb}\\licenceaddin-${slkversion}-template.zip
+                    set TemplateName=КомпонентаСЛК
+
+                    rem Проверяем существование исходного файла
+                    if not exist %SourceFile% (
+                        echo Исходный файл "%SourceFile%" не найден!
+                        goto Error
+                    )
+
+                    echo Путь к информационной базе: %${baseBuild}%
+                    echo Исходный файл: %SourceFile%
+                    echo Целевой шаблон: %TemplateName%
+
+                    rem Ищем установленную версию 1C:Enterprise
+                    for /f "delims=" %%i in ('dir /b /s /a:d /O:-D "%ProgramFiles%\\1cv8\\8.3.*"') do (
+                        set Designer="%%i\\bin\\1cv8.exe"
+                        if exist "%%i\\bin\\1cv8.exe" goto Found
+                    )
+
+                    rem Если 1C:Enterprise не найден, выводим сообщение об ошибке
+                    echo "1C:Enterprise не найден, невозможно обновить шаблон..."
+                    goto Error
+
+                    :Found
+                    echo Найдена 1C:Enterprise: %Designer%
+                    echo.
+
+                    rem Создаем временную директорию для хранения промежуточных файлов
+                    set TempDir=%TEMP%\\template.upd
+                    if exist "%TempDir%" (rmdir /s /q "%TempDir%" >nul)
+                    mkdir "%TempDir%"
+
+                    rem Если переменная CheckTemplate пустая, переходим к копированию исходного файла
+                    if "%CheckTemplate%" == "" goto CopySource
+
+                    rem Проверяем наличие шаблона в информационной базе
+                    echo Проверка шаблона...
+                    "${env.platformPath}" DESIGNER /S"${baseBuild}" /DumpConfigFiles"%TempDir%" -Template
+                    if errorlevel 1 goto Error
+
+                    rem Если общий шаблон не найден, выводим сообщение об ошибке
+                    if not exist "%TempDir%\\ОбщийМакет.%TemplateName%.Макет.bin" (
+                        echo Ошибка: Общий шаблон "%TemplateName%" не найден в информационной базе "%${baseBuild}%"
+                        goto Error
+                    )
+                    if exist "%TempDir%"\\* (rmdir /s /q "%TempDir%" >nul)
+                    mkdir "%TempDir%"
+
+                    :CopySource
+                    rem Копируем исходный файл в временную директорию
+                    copy "%SourceFile%" "%TempDir%\\ОбщийМакет.%TemplateName%.Макет.bin" >nul
+
+                    rem Загружаем шаблон в информационную базу и обновляем конфигурацию
+                    echo Загрузка шаблона...
+                    "${env.platformPath}" DESIGNER /S"${baseBuild}" /N"${buildUser}"  /LoadConfigFiles"%TempDir%" -Template /UpdateDBCfg
+                    if errorlevel 1 goto Error
+
+                    :Success
+                    echo Операция выполнена успешно
+                    goto End
+
+                    :Error
+                    echo Ошибка (%Errorlevel%), операция прервана
+                    set errorlevel=1
+
+                    :End
+                    rem Восстанавливаем кодировку и удаляем временную директорию
+                    chcp 866 >nul
+                    if exist "%TempDir%" (rmdir %TempDir% /S /Q >nul)
+                    echo.
+
+                """
+                // Создание файла .datafile
+                bat """
+                chcp 65001
+                    rem Путь к папке с licenceedit.exe
+                    cd /d "${fbrb}"
+                    @echo off
+                    rem Change to your serie ID
+                    set Serie=4FB1
+                    echo.
+
+                    licenceedit.exe c %Serie%.datafile "Helix.epf" -y --serie=%Serie%
+
+                    rem echo.
+                    rem echo ExitCode: %errorlevel%
+
+                    if errorlevel 1 goto Error
+
+                    :Success
+                    echo.
+                    echo Success, press any key to quit...
+                    goto End
+                    :Error
+
+                    echo.
+                    echo Error (%errorlevel%), press any key to quit...
+
+                    :End
+                """
+                
+                // Загрузка .datafile в макет 'ОбъектыСЛК'
+                bat """
+                    @echo off
+
+                    rem Устанавливаем кодировку для корректного отображения русских символов
+                    chcp 65001 >nul
+
+                    rem Задаем переменные: имя исходного файла, путь к информационной базе и имя шаблона
+                    set SourceFile=${fbrb}\\4FB1.datafile
+                    set TemplateName=ОбъектыСЛК
+
+                    rem Проверяем существование исходного файла
+                    if not exist %SourceFile% (
+                        echo Исходный файл "%SourceFile%" не найден!
+                        goto Error
+                    )
+
+                    echo Путь к информационной базе: %${baseBuild}%
+                    echo Исходный файл: %SourceFile%
+                    echo Целевой шаблон: %TemplateName%
+
+                    rem Ищем установленную версию 1C:Enterprise
+                    for /f "delims=" %%i in ('dir /b /s /a:d /O:-D "%ProgramFiles%\\1cv8\\8.3.*"') do (
+                        set Designer="%%i\\bin\\1cv8.exe"
+                        if exist "%%i\\bin\\1cv8.exe" goto Found
+                    )
+
+                    rem Если 1C:Enterprise не найден, выводим сообщение об ошибке
+                    echo "1C:Enterprise не найден, невозможно обновить шаблон..."
+                    goto Error
+
+                    :Found
+                    echo Найдена 1C:Enterprise: %Designer%
+                    echo.
+
+                    rem Создаем временную директорию для хранения промежуточных файлов
+                    set TempDir=%TEMP%\\template.upd
+                    if exist "%TempDir%" (rmdir /s /q "%TempDir%" >nul)
+                    mkdir "%TempDir%"
+
+                    rem Если переменная CheckTemplate пустая, переходим к копированию исходного файла
+                    if "%CheckTemplate%" == "" goto CopySource
+
+                    rem Проверяем наличие шаблона в информационной базе
+                    echo Проверка шаблона...
+                    "${env.platformPath}" DESIGNER /S"${baseBuild}" /DumpConfigFiles"%TempDir%" -Template
+                    if errorlevel 1 goto Error
+
+                    rem Если общий шаблон не найден, выводим сообщение об ошибке
+                    if not exist "%TempDir%\\ОбщийМакет.%TemplateName%.Макет.bin" (
+                        echo Ошибка: Общий шаблон "%TemplateName%" не найден в информационной базе "%${baseBuild}%"
+                        goto Error
+                    )
+                    if exist "%TempDir%"\\* (rmdir /s /q "%TempDir%" >nul)
+                    mkdir "%TempDir%"
+
+                    :CopySource
+                    rem Копируем исходный файл в временную директорию
+                    copy "%SourceFile%" "%TempDir%\\ОбщийМакет.%TemplateName%.Макет.bin" >nul
+
+                    rem Загружаем шаблон в информационную базу и обновляем конфигурацию
+                    echo Загрузка шаблона...
+                    "${env.platformPath}" CONFIG /S"${baseBuild}" /N"${buildUser}" /LoadConfigFiles"%TempDir%" -Template /UpdateDBCfg
+                    if errorlevel 1 goto Error
+
+                    :Success
+                    echo Операция выполнена успешно
+                    goto End
+
+                    :Error
+                    echo Ошибка (%Errorlevel%), операция прервана
+                    set errorlevel=1
+
+                    :End
+                    rem Восстанавливаем кодировку и удаляем временную директорию
+                    chcp 866 >nul
+                    if exist "%TempDir%" (rmdir %TempDir% /S /Q >nul)
+                    echo.
+                """
+
+                // Создание файла 4FB1.zip
+                def zip = 'SBORKA/STOMA/zip.py'
+                bat "python ${zip} ${fbrb} ${target_path}"
+               } 
+            }
+        }
+
+        stage('Основная поставка') {
+            steps {
+                script {
+                    bat """
+                    chcp 65001
+                    timeout /t 10 /nobreak
+                    "${env.platformPath}" DESIGNER /S"${baseBuild}" /N"${buildUser}" /CreateDistributivePackage"${collectedReleaseP}" -File"${fbrb}\\1С_Медицина_21_Внутренний_КомплектПоставки.edf" -PackageFileName setup.zip -Option"Основная поставка"
+                    """
+                    // Разархивирование
+                    def unzipping = 'SBORKA/STOMA/unzipping.py'
+                    bat "python ${unzipping} ${collectedReleaseP}"
+
+                    // Установка
+                    def install = 'SBORKA/STOMA/install.py'
+                    bat "python ${install} ${collectedReleaseP}"
+                }
+            }
+        }
+
+        stage("Выгрзка файла .cfu") {
+            steps {
+                bat """
+                chcp 65001
+                "${env.platformPath}" DESIGNER /S"${baseBuild}" /N"${buildUser}" /CreateDistributionFiles -cfufile ${sbor}\\Update\\1Cv8.cfu -f ${oldCF}\\${oldversion_1}.cf
+                """
+            }
+        }
+
+        stage('Поставка обновления') {
+            steps {
+                script {
+                    bat """
+                    chcp 65001
+                    "${env.platformPath}" DESIGNER /S"${baseBuild}" /N"${buildUser}" /CreateDistributivePackage"${collectedReleaseOb}" -File"${fbrb}\\Файл описания комплекта поставки.edf" -PackageFileName update.zip -Option"Поставка обновления"
+                    """
+
+                    // Разархивирование
+                    def unzippingupdate = 'SBORKA/STOMA/unzippingupdate.py'
+                    bat "python ${unzippingupdate} ${collectedReleaseOb}"
+
+                     // Установка
+                    def installupdate = 'SBORKA/STOMA/installupdate.py'
+                    bat "python ${installupdate} ${collectedReleaseOb}"
+                }
+            }
+        }
+
+        stage('Создание архива дистрибутива') {
+            steps {
+                script {
+                    def perenos = 'SBORKA/STOMA/Perenos.py'
+                    bat "python ${perenos} ${newversion_1} ${target_path} ${collectedReleaseP} ${oldCF} ${collectedReleaseOb} ${fbrb}"
+
+                    // Отправка сообщения в Telegram
+                    def messagefinish = 'Сборка «1С: Стоматологическая клиника 2.0» успешно завершена.'
+                    def response = httpRequest(url: "https://api.telegram.org/bot${botToken}/sendMessage?chat_id=${chatId}&text=${URLEncoder.encode(messagefinish, 'UTF-8')}"
+                    )
+                }
+            }
+        }
+    }
+}

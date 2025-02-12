@@ -1,0 +1,62 @@
+
+{
+    "$schema": "https://raw.githubusercontent.com/vanessa-opensource/vanessa-runner/develop/vanessa-runner-schema.json",
+    "default": {
+        "--v8version": "8.3.24.1368",
+        "--bitness": "x64"
+    },
+    "loadrepo": {
+        "--storage-name": "http://192.168.2.16/hran1c/repository.1ccr/fitness_release",
+        "--storage-user": "МихаилБ",
+        "--storage-pwd": "3AqH649z0B",
+        "--ibconnection": "/Slocalhost/FitnessRel",
+        "--db-user": "Администратор",
+        "--db-pwd": ""
+    },
+    "create": {
+        "--db-server": "localhost",
+        "--name": "udd",
+        "--dbms": "PostgreSQL",
+        "--db-admin":"postgres",
+        "--db-admin-pwd":"postgres"
+    },
+    "remove": {
+        "--name": "udd",
+        "--drop-database": true,
+        "--clear-database": true,
+        "--db-user": "",
+        "--db-pwd": ""        
+    },
+    "load": {
+        "--src": "D:\\cf\\cf.cf",
+        "--ibconnection": "/Slocalhost/udd",
+        "--db-user": "",
+        "--db-pwd": ""
+    },
+    "unload": {
+        "cfpath": "D:\\cf\\cf.cf",
+        "--ibconnection": "/Slocalhost/FitnessRel",
+        "--db-user": "Администратор",
+        "--db-pwd": ""
+    },
+    "updatedb": {
+        "--ibconnection": "/Slocalhost/udd"
+    },
+    "session": {
+        "Действие": "kill",
+        "--with-nolock": true,
+        "--db": "FitnessRel",
+        "--db-user": "Администратор",
+        "--db-pwd": ""
+    },
+    "vanessa": {
+        "--path": "C:\\GitHu\\Helix-QA\\vanessa-runner\\feature\\Main.feature",
+        "--pathvanessa": "C:\\VA_test\\vanessa-automation\\vanessa-automation.epf",
+        "--ibconnection": "/Slocalhost/pusto",
+        "--db-user": "",
+        "--db-pwd": "",
+        "--vanessasettings": "C:\\GitHu\\Helix-QA\\vanessa-runner\\UpdatingdDemoDatabase\\VAParams.json",
+        "--nocacheuse": true
+    }
+
+}

@@ -1,0 +1,36 @@
+pipeline {
+    agent {
+        label "${params.jenkinsAgent}"
+    }
+    environment {
+        VRUNNER_PATH = 'vrunner' // Путь к исполняемому файлу Vanessa Runner
+        JSON_PATH = 'vanessa-runner/CreateBase/vrunner.json'   // Путь к вашему vrunner.json
+    }
+    stages {
+        stage('Создание базы на моём пк') {
+                when {
+                        expression { env.NODE_NAME == 'deploy-node-m' }
+                }
+                steps {
+                    script {
+                        //def script = 'vanessa-runner/replace.py'
+                        //powershell "python ${script} ${RELEASE} ${sourceFile} ${params.JSON_PATH} "
+                        if (params.STATUS == 'create') {
+                        bat """
+                        chcp 65001
+                        @call ${VRUNNER_PATH} create --settings ${JSON_PATH}
+                        @call ${VRUNNER_PATH} restore \\\\192.168.9.190\\hub\\DT\\${params.RELEASE}.dt --settings ${JSON_PATH}
+                        """
+                        } else if (params.STATUS == 'delete') {
+                        bat """
+                        chcp 65001
+                        @call ${VRUNNER_PATH} session --settings ${JSON_PATH}
+                        @call ${VRUNNER_PATH} remove --settings ${JSON_PATH}
+                        """
+
+                    }
+                 }
+            }
+        }
+    }
+}
