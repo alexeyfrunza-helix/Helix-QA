@@ -8,7 +8,7 @@ pipeline {
             BASE_URL = 'http://95.163.137.45/demo_stoma_denis'
 			USER_NAME = 'Виноградова Мария Александровна'
           
-            // Релизное хранилище
+            // Релизное хранилище //
             INFOBASE_PATH = "D:\\DemoBase\\Stoma"
 			INFOBASE_USER = "admin"
             REPO_URL = 'http://192.168.2.16/hran1c/repository.1ccr/stomatology2_release'
